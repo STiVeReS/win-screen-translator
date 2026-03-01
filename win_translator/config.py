@@ -158,6 +158,7 @@ class RoiSectionConfig:
 
     id: str = ''
     name: str = 'Секція'
+    target_app: str = ''
     monitor_index: int = 1
     x: int = 0
     y: int = 0
@@ -215,6 +216,7 @@ class RoiSectionConfig:
             cfg.y = int(cfg.y or 0)
             cfg.width = int(cfg.width or 1)
             cfg.height = int(cfg.height or 1)
+            cfg.target_app = str(data.get('target_app', '')).strip()
         except Exception:
             cfg.x = 0
             cfg.y = 0

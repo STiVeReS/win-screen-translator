@@ -2,7 +2,6 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-
 @dataclass
 class WinRect:
     left: int
@@ -42,13 +41,18 @@ else:
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
 
+    kernel32 = ctypes.windll.kernel32
+    psapi = ctypes.windll.psapi
+
     PW_CLIENTONLY = 0x00000001
     PW_RENDERFULLCONTENT = 0x00000002
     DIB_RGB_COLORS = 0
     SRCCOPY = 0x00CC0020
 
-    GA_ROOT = 2
+    PROCESS_QUERY_INFORMATION = 0x0400
+    PROCESS_VM_READ = 0x0010
 
+    GA_ROOT = 2
 
     class POINT(ctypes.Structure):
         _fields_ = [("x", ctypes.wintypes.LONG), ("y", ctypes.wintypes.LONG)]
@@ -81,6 +85,28 @@ else:
 
     class BITMAPINFO(ctypes.Structure):
         _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", ctypes.wintypes.DWORD * 3)]
+
+    def get_window_process_name(hwnd: int) -> str:
+        """Повертає назву .exe файлу для заданого вікна (наприклад, 'notepad.exe')."""
+        try:
+            pid = ctypes.wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value == 0:
+                return ""
+            
+            h_process = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+            if not h_process:
+                return ""
+            
+            buf = ctypes.create_unicode_buffer(1024)
+            length = psapi.GetModuleBaseNameW(h_process, None, buf, 1024)
+            kernel32.CloseHandle(h_process)
+            
+            if length > 0:
+                return str(buf.value)
+        except Exception:
+            pass
+        return ""
 
 
     def is_window_valid(hwnd: int) -> bool:

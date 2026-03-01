@@ -29,6 +29,7 @@ class ProviderType(Enum):
     FREE_GOOGLE = "freegoogle"  # Free Google Translate via deep-translator
     RAPIDOCR = "rapidocr"       # Local RapidOCR via ONNX Runtime (no internet required)
     ARGOS = "argos"             # Local Argos Translate (offline, requires language packages)
+    WINDOWS_OCR = "windows"     # Windows built-in OCR (no key, Windows 10+)
 
 
 @dataclass

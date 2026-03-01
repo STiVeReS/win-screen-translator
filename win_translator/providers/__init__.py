@@ -21,6 +21,7 @@ from .ocrspace import OCRSpaceProvider
 from .free_translate import FreeTranslateProvider
 from .rapidocr_provider import RapidOCRProvider
 from .argos_translate import ArgosTranslateProvider
+from .windows_ocr import WindowsOcrProvider
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,8 @@ class ProviderManager:
 
     def get_ocr_provider(self, provider_type: Optional[ProviderType] = None) -> Optional[OCRProvider]:
         if provider_type is None:
+            if self._ocr_provider_preference == 'windows_ocr':
+                provider_type = ProviderType.WINDOWS_OCR
             if self._ocr_provider_preference == "rapidocr":
                 provider_type = ProviderType.RAPIDOCR
             elif self._ocr_provider_preference == "googlecloud":
@@ -125,7 +128,9 @@ class ProviderManager:
                 provider_type = ProviderType.OCR_SPACE
 
         if provider_type not in self._ocr_providers:
-            if provider_type == ProviderType.OCR_SPACE:
+            if provider_type == ProviderType.WINDOWS_OCR:
+                self._ocr_providers[provider_type] = WindowsOcrProvider()
+            elif provider_type == ProviderType.OCR_SPACE:
                 self._ocr_providers[provider_type] = OCRSpaceProvider(api_key=self._ocrspace_api_key, data_dir=self._data_dir)
             elif provider_type == ProviderType.GOOGLE:
                 self._ocr_providers[provider_type] = GoogleVisionProvider(self._google_api_key)

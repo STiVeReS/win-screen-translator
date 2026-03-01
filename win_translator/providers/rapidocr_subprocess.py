@@ -84,6 +84,7 @@ def run_ocr(image_path: str, models_dir: str, min_confidence: float, box_thresh:
             "Rec.engine_type": EngineType.ONNXRUNTIME,
             "EngineConfig.onnxruntime.intra_op_num_threads": 1,
             "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+            "EngineConfig.onnxruntime.providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
         }
         if models_exist:
             params["Det.model_path"] = det_model

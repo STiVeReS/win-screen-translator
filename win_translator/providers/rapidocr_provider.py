@@ -87,6 +87,12 @@ class RapidOCRProvider(OCRProvider):
         # Engines cached per "lang family"
         self._engine_cache: Dict[str, Any] = {}
 
+        # Прогріваємо движок для основних мов при запуску
+        try:
+            self._get_engine("en")
+        except Exception as e:
+            logger.warning("Не вдалося прогріти RapidOCR: %s", e)
+
         logger.debug(
             "RapidOCRProvider initialized (plugin_dir=%s, models_dir=%s, min_confidence=%s)",
             self._plugin_dir,
@@ -168,7 +174,10 @@ class RapidOCRProvider(OCRProvider):
     def _build_engine_rapidocr(self) -> Any:
         # rapidocr: просте використання без явних шляхів моделей
         from rapidocr import RapidOCR
-        engine = RapidOCR()
+        params = {
+            "EngineConfig.onnxruntime.providers": ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        }
+        engine = RapidOCR(params=params)
         return engine
 
     def _pick_rec_model_for_family(self, family: str) -> Optional[str]:

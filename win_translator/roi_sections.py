@@ -678,7 +678,19 @@ class RoiSectionController(QtCore.QObject):
         self._timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._tick)
 
+        # ДОДАНО: Поточна вибрана програма (її буде передавати app.py)
+        self.active_exe: str = ""
+
         self._update_overlay_geometry()
+
+    def set_active_exe(self, exe_name: str) -> None:
+        """Оновлює прив'язку до активного вікна. Викликається ззовні (наприклад, з app.py)."""
+        self.active_exe = exe_name
+        
+        # Якщо секція має прив'язку, але вибрана інша гра - одразу ховаємо оверлей
+        target = getattr(self.section, 'target_app', "").strip().lower()
+        if target and target != self.active_exe.lower():
+            self._clear_overlay()
 
     def set_overlay_enabled_global(self, enabled: bool) -> None:
         self._overlay_enabled_global = bool(enabled)
@@ -999,6 +1011,14 @@ class RoiSectionController(QtCore.QObject):
         if self._busy:
             return
 
+        # --- ДОДАНО: Фільтр цільового вікна ---
+        target = getattr(self.section, 'target_app', "").strip().lower()
+        # Якщо у секції прописаний target_app, і він не збігається з поточним активним exe
+        if target and target != self.active_exe.lower():
+            self._clear_overlay() # Ховаємо текст
+            return                # Перериваємо tick (не робимо OCR і переклад)
+        # --------------------------------------
+
         need_hide = True
         try:
             if bool(getattr(self.cfg, 'exclude_overlay_from_capture', True)):
@@ -1022,112 +1042,112 @@ class RoiSectionController(QtCore.QObject):
 
     @QtCore.Slot(object, object, object, object)
     def _on_done(self, section_id, cap: CaptureInfo, items: List[OverlayItem], meta):
-            if section_id != self.section.id:
-                return
-            self._busy = False
+        if section_id != self.section.id:
+            return
+        self._busy = False
 
+        src_text = ""
+        src_norm = ""
+        raw_heights_cap = []
+        try:
+            if isinstance(meta, dict):
+                src_text = str(meta.get('src_text') or '')
+                src_norm = str(meta.get('src_norm') or '')
+                raw_heights_cap = meta.get('raw_heights') or []
+        except Exception:
             src_text = ""
             src_norm = ""
-            raw_heights_cap = []
+
+        # 1) Якщо текст у зоні зник: прибираємо бокс і чистимо кеш
+        if not src_norm:
+            self._last_src_text = ""
+            self._last_src_norm = ""
+            self._last_items = None
+            self._last_ocr_signature = None
+            self._last_translations = None
+            self._clear_overlay()
+            return
+
+        # 2) Якщо ≥90% схожий на попередній: НЕ перекладаємо/НЕ чіпаємо бокс
+        if self._last_src_norm and is_same_or_similar(src_norm, self._last_src_norm, threshold=self._similarity_threshold):
+            self._restore_own_overlay_if_needed()
+            return
+
+        # 3) Новий текст: оновлюємо кеш
+        self._last_src_text = src_text
+        self._last_src_norm = src_norm
+
+        try:
+            if isinstance(meta, dict):
+                self._last_ocr_signature = meta.get('signature')
+                self._last_translations = meta.get('translations')
+        except Exception:
+            pass
+
+        if not items:
+            self._last_items = None
+            self._clear_overlay()
+            return
+
+        self._last_items = items
+
+        if not self._overlay_enabled_global:
+            return
+        if not self.section.enabled:
+            return
+
+        if self._overlay_style is not None:
             try:
-                if isinstance(meta, dict):
-                    src_text = str(meta.get('src_text') or '')
-                    src_norm = str(meta.get('src_norm') or '')
-                    raw_heights_cap = meta.get('raw_heights') or []
-            except Exception:
-                src_text = ""
-                src_norm = ""
-
-            # 1) Якщо текст у зоні зник: прибираємо бокс і чистимо кеш
-            if not src_norm:
-                self._last_src_text = ""
-                self._last_src_norm = ""
-                self._last_items = None
-                self._last_ocr_signature = None
-                self._last_translations = None
-                self._clear_overlay()
-                return
-
-            # 2) Якщо ≥90% схожий на попередній: НЕ перекладаємо/НЕ чіпаємо бокс
-            if self._last_src_norm and is_same_or_similar(src_norm, self._last_src_norm, threshold=self._similarity_threshold):
-                self._restore_own_overlay_if_needed()
-                return
-
-            # 3) Новий текст: оновлюємо кеш
-            self._last_src_text = src_text
-            self._last_src_norm = src_norm
-
-            try:
-                if isinstance(meta, dict):
-                    self._last_ocr_signature = meta.get('signature')
-                    self._last_translations = meta.get('translations')
-            except Exception:
-                pass
-
-            if not items:
-                self._last_items = None
-                self._clear_overlay()
-                return
-
-            self._last_items = items
-
-            if not self._overlay_enabled_global:
-                return
-            if not self.section.enabled:
-                return
-
-            if self._overlay_style is not None:
-                try:
-                    self.overlay.set_style(self._overlay_style)
-                except Exception:
-                    pass
-
-            items_fixed: List[OverlayItem] = []
-
-            inv_x = float(self._inv_dpr or 1.0)
-            inv_y = float(self._inv_dpr or 1.0)
-            try:
-                ov_w = int(self.overlay.width() or 0)
-                ov_h = int(self.overlay.height() or 0)
-                cap_w = int(getattr(cap, 'width', 0) or 0)
-                cap_h = int(getattr(cap, 'height', 0) or 0)
-
-                if ov_w > 0 and cap_w > 0:
-                    inv_x = float(ov_w) / float(cap_w)
-                if ov_h > 0 and cap_h > 0:
-                    inv_y = float(ov_h) / float(cap_h)
+                self.overlay.set_style(self._overlay_style)
             except Exception:
                 pass
 
-            for it in items:
-                items_fixed.append(
-                    OverlayItem(
-                        left=int(round(int(it.left) * inv_x)),
-                        top=int(round(int(it.top) * inv_y)),
-                        right=int(round(int(it.right) * inv_x)),
-                        bottom=int(round(int(it.bottom) * inv_y)),
-                        text=it.text,
-                        bg_color=it.bg_color,
-                    )
+        items_fixed: List[OverlayItem] = []
+
+        inv_x = float(self._inv_dpr or 1.0)
+        inv_y = float(self._inv_dpr or 1.0)
+        try:
+            ov_w = int(self.overlay.width() or 0)
+            ov_h = int(self.overlay.height() or 0)
+            cap_w = int(getattr(cap, 'width', 0) or 0)
+            cap_h = int(getattr(cap, 'height', 0) or 0)
+
+            if ov_w > 0 and cap_w > 0:
+                inv_x = float(ov_w) / float(cap_w)
+            if ov_h > 0 and cap_h > 0:
+                inv_y = float(ov_h) / float(cap_h)
+        except Exception:
+            pass
+
+        for it in items:
+            items_fixed.append(
+                OverlayItem(
+                    left=int(round(int(it.left) * inv_x)),
+                    top=int(round(int(it.top) * inv_y)),
+                    right=int(round(int(it.right) * inv_x)),
+                    bottom=int(round(int(it.bottom) * inv_y)),
+                    text=it.text,
+                    bg_color=it.bg_color,
                 )
+            )
 
-            raw_heights_dip = []
-            try:
-                raw_heights_dip = [float(h) * inv_y for h in raw_heights_cap]
-            except Exception:
-                pass
+        raw_heights_dip = []
+        try:
+            raw_heights_dip = [float(h) * inv_y for h in raw_heights_cap]
+        except Exception:
+            pass
 
-            try:
-                self._maybe_auto_init_font_and_box(items_fixed, raw_heights_dip)
-            except Exception:
-                pass
+        try:
+            self._maybe_auto_init_font_and_box(items_fixed, raw_heights_dip)
+        except Exception:
+            pass
 
-            self.overlay.set_items(items_fixed, font_scale=self.cfg.font_scale)
-            self.overlay.show()
-            try:
-                self.overlay.raise_()
-            except Exception:
-                pass
+        self.overlay.set_items(items_fixed, font_scale=self.cfg.font_scale)
+        self.overlay.show()
+        try:
+            self.overlay.raise_()
+        except Exception:
+            pass
     
     @QtCore.Slot(object, str)
     def _on_failed(self, section_id, msg: str):
@@ -1214,6 +1234,11 @@ class RoiSectionEditDialog(QtWidgets.QDialog):
         form_main = QtWidgets.QFormLayout(tab_main)
 
         self.name = QtWidgets.QLineEdit()
+        
+        # ДОДАНО: Поле для цільового вікна
+        self.target_app = QtWidgets.QLineEdit() 
+        self.target_app.setPlaceholderText("Наприклад: game.exe (або залиште пустим)")
+        
         self.enabled = QtWidgets.QCheckBox('Увімкнено')
 
         self.monitor = QtWidgets.QComboBox()
@@ -1231,6 +1256,16 @@ class RoiSectionEditDialog(QtWidgets.QDialog):
 
         if section is None:
             self.name.setText('Секція')
+            
+            # --- ДОДАНО: Автоматично підтягуємо поточний активний exe ---
+            default_exe = ""
+            for w in self._app.topLevelWidgets():
+                if type(w).__name__ == 'WinTranslatorApp':
+                    default_exe = getattr(w, '_target_exe', '')
+                    break
+            self.target_app.setText(default_exe)
+            # -------------------------------------------------------------
+            
             self.enabled.setChecked(True)
             self.interval.setValue(int(getattr(cfg, 'continuous_interval_ms', 2000)))
 
@@ -1242,6 +1277,7 @@ class RoiSectionEditDialog(QtWidgets.QDialog):
                 self.monitor.setCurrentIndex(idx)
         else:
             self.name.setText(section.name)
+            self.target_app.setText(getattr(section, 'target_app', '')) # ДОДАНО
             self.enabled.setChecked(bool(section.enabled))
             self.interval.setValue(int(section.interval_ms or 2000))
 
@@ -1252,6 +1288,7 @@ class RoiSectionEditDialog(QtWidgets.QDialog):
         self._sync_roi_label()
 
         form_main.addRow('Назва:', self.name)
+        form_main.addRow('Прив\'язка (.exe):', self.target_app) # ДОДАНО
         form_main.addRow('Монітор:', self.monitor)
         form_main.addRow('Оновлення (мс):', self.interval)
         form_main.addRow('Стан:', self.enabled)
@@ -1503,6 +1540,9 @@ class RoiSectionEditDialog(QtWidgets.QDialog):
         if not name:
             name = 'Секція'
 
+        # ДОДАНО: Зчитуємо текст з поля
+        target = (self.target_app.text() or '').strip()
+
         mon = self.monitor.currentData()
         if mon is None:
             mon = 1
@@ -1519,6 +1559,7 @@ class RoiSectionEditDialog(QtWidgets.QDialog):
             out = RoiSectionConfig.from_dict(self._section.__dict__)
 
         out.name = name
+        out.target_app = target # ДОДАНО: Записуємо в конфіг
         out.enabled = bool(self.enabled.isChecked())
         out.monitor_index = int(mon_idx)
         out.interval_ms = int(self.interval.value())
@@ -1584,8 +1625,8 @@ class RoiSectionsDialog(QtWidgets.QDialog):
         self._cfg = cfg
 
         self._table = QtWidgets.QTableWidget(self)
-        self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(['Увімкнено', 'Назва', 'Монітор', 'Інтервал (мс)'])
+        self._table.setColumnCount(5)
+        self._table.setHorizontalHeaderLabels(['Увімкнено', 'Назва', 'Цільове вікно', 'Монітор', 'Інтервал (мс)'])
         self._table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
@@ -1663,15 +1704,25 @@ class RoiSectionsDialog(QtWidgets.QDialog):
 
             it_name = QtWidgets.QTableWidgetItem(str(s.name))
             it_name.setFlags(it_name.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+
+            # Колонка для Target App
+            target_val = getattr(s, 'target_app', '')
+            display_target = target_val if target_val else "Глобальна (Всі)"
+            it_target = QtWidgets.QTableWidgetItem(display_target)
+            it_target.setFlags(it_target.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            
             it_mon = QtWidgets.QTableWidgetItem(str(int(s.monitor_index or 1)))
             it_mon.setFlags(it_mon.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            
             it_int = QtWidgets.QTableWidgetItem(str(int(s.interval_ms or 2000)))
             it_int.setFlags(it_int.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
 
+            # Встановлюємо комірки у правильні стовпці (від 0 до 4)
             self._table.setItem(r, 0, it_enabled)
             self._table.setItem(r, 1, it_name)
-            self._table.setItem(r, 2, it_mon)
-            self._table.setItem(r, 3, it_int)
+            self._table.setItem(r, 2, it_target)
+            self._table.setItem(r, 3, it_mon)    
+            self._table.setItem(r, 4, it_int)    
 
             # зберігаємо id як data
             it_name.setData(QtCore.Qt.ItemDataRole.UserRole, str(s.id))
@@ -1680,7 +1731,6 @@ class RoiSectionsDialog(QtWidgets.QDialog):
 
         self._table.resizeColumnsToContents()
         self._reloading = False
-
     def _on_item_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
         if getattr(self, '_reloading', False):
             return

@@ -24,7 +24,7 @@ from .providers import ProviderManager
 from .roi_sections import RoiSectionsDialog, RoiSectionController, select_roi_on_monitor
 from .text_merge import merge_close_text_regions
 from .text_fix import fix_text_batch
-from .win32_window import get_window_under_cursor, get_window_title, is_window_valid
+from .win32_window import get_window_process_name, get_window_under_cursor, get_window_title, is_window_valid
 
 logger = logging.getLogger(__name__)
 
@@ -492,7 +492,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self.monitor.setCurrentIndex(cur_idx)
 
         self.ocr_provider = QtWidgets.QComboBox()
-        self.ocr_provider.addItems(['ocrspace', 'googlecloud', 'rapidocr'])
+        self.ocr_provider.addItems(['windows_ocr', 'ocrspace', 'googlecloud', 'rapidocr'])
         self.ocr_provider.setCurrentText(cfg.ocr_provider)
 
         self.translation_provider = QtWidgets.QComboBox()
@@ -1350,6 +1350,7 @@ class AppController(QtCore.QObject):
         title = get_window_title(int(hwnd))
         self._target_hwnd = int(hwnd)
         self._target_title = str(title or '').strip()
+        self._target_exe = get_window_process_name(self._target_hwnd)
         self._update_target_window_ui()
 
         # Скидаємо кеш, щоб точно не показати старий результат через skip_translate_if_same_text
@@ -1379,6 +1380,7 @@ class AppController(QtCore.QObject):
     def clear_target_window(self) -> None:
         self._target_hwnd = None
         self._target_title = ''
+        self._target_exe = ""
         self._update_target_window_ui()
         self.tray.showMessage('Win Screen Translator', 'Target window очищено.', QtWidgets.QSystemTrayIcon.MessageIcon.Information)
 
@@ -1640,11 +1642,6 @@ class AppController(QtCore.QObject):
                 except Exception:
                     continue
 
-            self.tray.showMessage(
-                'Win Screen Translator',
-                f'Постійний режим (ROI): ON (секцій: {started})',
-                QtWidgets.QSystemTrayIcon.MessageIcon.Information,
-            )
             return
 
         if self._continuous_active:
@@ -1676,11 +1673,6 @@ class AppController(QtCore.QObject):
                 except Exception:
                     continue
 
-            self.tray.showMessage(
-                'Win Screen Translator',
-                'Постійний режим (ROI): OFF',
-                QtWidgets.QSystemTrayIcon.MessageIcon.Information,
-            )
             return
 
         if not self._continuous_active:
@@ -2083,8 +2075,6 @@ class AppController(QtCore.QObject):
             except Exception:
                 pass
 
-        self.tray.showMessage('Win Screen Translator', 'ROI секцію додано.', QtWidgets.QSystemTrayIcon.MessageIcon.Information)
-
     @QtCore.Slot()
     def open_roi_sections(self) -> None:
         dlg = RoiSectionsDialog(self.app, self.cfg)
@@ -2119,8 +2109,6 @@ class AppController(QtCore.QObject):
                 self.start_continuous()
             except Exception:
                 pass
-
-        self.tray.showMessage('Win Screen Translator', 'Секції збережено.', QtWidgets.QSystemTrayIcon.MessageIcon.Information)
 
     @QtCore.Slot()
     def quit(self) -> None:
