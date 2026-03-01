@@ -218,214 +218,229 @@ class RoiTranslateWorker(threading.Thread):
         self.prev_translations = prev_translations
 
     def run(self) -> None:
-        sid = self.section.id
-        try:
-            ocr_provider = (self.cfg.ocr_provider or '').strip().lower()
-            if ocr_provider == 'ocrspace':
-                image_bytes, cap = capture_region_for_ocr(
-                    monitor_index=self.section.monitor_index,
-                    rel_x=self.section.x,
-                    rel_y=self.section.y,
-                    width=self.section.width,
-                    height=self.section.height,
-                )
-                cap_ext = 'jpg'
-            else:
-                image_bytes, cap = capture_region_png(
-                    monitor_index=self.section.monitor_index,
-                    rel_x=self.section.x,
-                    rel_y=self.section.y,
-                    width=self.section.width,
-                    height=self.section.height,
-                )
-                cap_ext = 'png'
-
-            # debug: останній кадр конкретної секції
+            sid = self.section.id
             try:
-                if bool(getattr(self.cfg, 'debug_ocr_log', False)):
-                    dbg_dir = os.path.join(self.cfg.config_dir(), 'debug')
-                    os.makedirs(dbg_dir, exist_ok=True)
-                    safe = (sid or 'roi').replace('/', '_').replace('\\', '_')
-                    dbg_path = os.path.join(dbg_dir, f'last_capture_{safe}.{cap_ext}')
-                    with open(dbg_path, 'wb') as f:
-                        f.write(image_bytes)
-                    logger.info('Debug capture saved: %s (%d KB)', dbg_path, int(len(image_bytes) / 1024))
-            except Exception:
-                pass
-
-            pm = ProviderManager(data_dir=self.cfg.config_dir(), ocrspace_api_key=self.cfg.ocrspace_api_key)
-            pm.configure(
-                google_api_key=self.cfg.google_api_key,
-                ocr_provider=self.cfg.ocr_provider,
-                translation_provider=self.cfg.translation_provider,
-                rapidocr_models_dir=self.cfg.rapidocr_models_dir,
-                ocrspace_api_key=self.cfg.ocrspace_api_key,
-                data_dir=self.cfg.config_dir(),
-            )
-            pm.set_rapidocr_confidence(self.cfg.rapidocr_min_confidence)
-            pm.set_rapidocr_box_thresh(self.cfg.rapidocr_box_thresh)
-            pm.set_rapidocr_unclip_ratio(self.cfg.rapidocr_unclip_ratio)
-
-            async def pipeline():
-                regions = await pm.recognize_text(image_bytes, self.cfg.source_lang)
-
-                # Зліплюємо близькі бокси в один рядок, щоб не було «каші» з перекладу по шматках.
-                try:
-                    if bool(getattr(self.cfg, 'merge_close_text_regions', True)):
-                        before_n = len(regions)
-                        regions = merge_close_text_regions(
-                            regions,
-                            enabled=True,
-                            x_gap_ratio=float(getattr(self.cfg, 'merge_x_gap_ratio', 1.25) or 1.25),
-                            line_y_ratio=float(getattr(self.cfg, 'merge_line_y_ratio', 0.70) or 0.70),
-                            merge_vertical=bool(getattr(self.cfg, 'merge_vertical_lines', True)),
-                        )
-                        after_n = len(regions)
-                        if after_n != before_n:
-                            logger.info('ROI OCR merge: section=%s %d -> %d regions', self.section.name, before_n, after_n)
-                except Exception:
-                    pass
-
-                try:
-                    logger.info(
-                        "ROI OCR done: section=%s provider=%s regions=%d capture=%dx%d at (%d,%d)",
-                        self.section.name,
-                        pm.last_ocr_provider_name or self.cfg.ocr_provider,
-                        len(regions),
-                        cap.width, cap.height,
-                        cap.left, cap.top,
+                ocr_provider = (self.cfg.ocr_provider or '').strip().lower()
+                if ocr_provider == 'ocrspace':
+                    image_bytes, cap = capture_region_for_ocr(
+                        monitor_index=self.section.monitor_index,
+                        rel_x=self.section.x,
+                        rel_y=self.section.y,
+                        width=self.section.width,
+                        height=self.section.height,
                     )
+                    cap_ext = 'jpg'
+                else:
+                    image_bytes, cap = capture_region_png(
+                        monitor_index=self.section.monitor_index,
+                        rel_x=self.section.x,
+                        rel_y=self.section.y,
+                        width=self.section.width,
+                        height=self.section.height,
+                    )
+                    cap_ext = 'png'
+
+                try:
+                    if bool(getattr(self.cfg, 'debug_ocr_log', False)):
+                        dbg_dir = os.path.join(self.cfg.config_dir(), 'debug')
+                        os.makedirs(dbg_dir, exist_ok=True)
+                        safe = (sid or 'roi').replace('/', '_').replace('\\', '_')
+                        dbg_path = os.path.join(dbg_dir, f'last_capture_{safe}.{cap_ext}')
+                        with open(dbg_path, 'wb') as f:
+                            f.write(image_bytes)
+                        logger.info('Debug capture saved: %s (%d KB)', dbg_path, int(len(image_bytes) / 1024))
                 except Exception:
                     pass
 
-                texts = [r.text for r in regions]
+                pm = ProviderManager(data_dir=self.cfg.config_dir(), ocrspace_api_key=self.cfg.ocrspace_api_key)
+                pm.configure(
+                    google_api_key=self.cfg.google_api_key,
+                    ocr_provider=self.cfg.ocr_provider,
+                    translation_provider=self.cfg.translation_provider,
+                    rapidocr_models_dir=self.cfg.rapidocr_models_dir,
+                    ocrspace_api_key=self.cfg.ocrspace_api_key,
+                    data_dir=self.cfg.config_dir(),
+                )
+                pm.set_rapidocr_confidence(self.cfg.rapidocr_min_confidence)
+                pm.set_rapidocr_box_thresh(self.cfg.rapidocr_box_thresh)
+                pm.set_rapidocr_unclip_ratio(self.cfg.rapidocr_unclip_ratio)
 
-                def _sig(parts: List[str]) -> str:
-                    cleaned: List[str] = []
-                    for p in (parts or []):
-                        s = (p or '').strip()
-                        cleaned.append(s)
-                    joined = '\n'.join(cleaned)
-                    return f"{self.cfg.source_lang}->{self.cfg.target_lang}|{joined}".strip()
+                async def pipeline():
+                    regions = await pm.recognize_text(image_bytes, self.cfg.source_lang)
 
-                # Важливо: зберігаємо “джерельний” текст (для схожості/зникнення)
-                cleaned_src: List[str] = []
-                for p in (texts or []):
-                    s = (p or '').strip()
-                    if s:
-                        cleaned_src.append(s)
+                    # -- 1. ЗБЕРІГАЄМО ОРИГІНАЛЬНІ ВИСОТИ БОКСІВ ДО ЗЛИТТЯ --
+                    raw_heights_cap = []
+                    sy = float(cap.scale_y)
+                    for r in regions:
+                        try:
+                            rect = getattr(r, 'rect', None)
+                            h = 0.0
+                            if isinstance(rect, dict):
+                                if 'bottom' in rect and 'top' in rect:
+                                    h = float(rect['bottom']) - float(rect.get('top', 0))
+                                else:
+                                    h = float(rect.get('height', 0))
+                            elif isinstance(rect, (list, tuple)) and len(rect) == 4:
+                                h = float(rect[3])
+                            
+                            if h > 4.0:
+                                raw_heights_cap.append(h * sy)
+                        except Exception:
+                            pass
 
-                src_text = '\n'.join(cleaned_src).strip()
-                src_norm = normalize_text(src_text)
-
-                signature = _sig(texts)
-
-                print(src_norm)
-
-                translations: List[str] = []
-                can_reuse = False
-                if bool(getattr(self.cfg, 'skip_translate_if_same_text', True)):
-                    if self.prev_signature is not None and str(self.prev_signature) == str(signature):
-                        if self.prev_translations is not None and len(self.prev_translations) == len(texts):
-                            can_reuse = True
-
-                if can_reuse:
-                    translations = list(self.prev_translations or [])
+                    # -- 2. ЗЛІПЛЮЄМО БЛИЗЬКІ БОКСИ --
                     try:
-                        logger.info('ROI Translate skipped (same text): section=%s items=%d', self.section.name, len(translations))
+                        if bool(getattr(self.cfg, 'merge_close_text_regions', True)):
+                            before_n = len(regions)
+                            regions = merge_close_text_regions(
+                                regions,
+                                enabled=True,
+                                x_gap_ratio=float(getattr(self.cfg, 'merge_x_gap_ratio', 1.25) or 1.25),
+                                line_y_ratio=float(getattr(self.cfg, 'merge_line_y_ratio', 0.70) or 0.70),
+                                merge_vertical=bool(getattr(self.cfg, 'merge_vertical_lines', True)),
+                            )
+                            after_n = len(regions)
+                            if after_n != before_n:
+                                logger.info('ROI OCR merge: section=%s %d -> %d regions', self.section.name, before_n, after_n)
                     except Exception:
                         pass
-                else:
-                    # Якщо OCR нічого не впізнав (або зникло) переклад не робимо взагалі
-                    if not src_norm:
-                        translations = []
-                    else:
-                        translations = await pm.translate_text(texts, self.cfg.source_lang, self.cfg.target_lang)
 
-                try:
-                    logger.info(
-                        "ROI Translate done: section=%s provider=%s items=%d %s->%s",
-                        self.section.name,
-                        pm.last_translation_provider_name or self.cfg.translation_provider,
-                        len(translations),
-                        self.cfg.source_lang,
-                        self.cfg.target_lang,
-                    )
-                except Exception:
-                    pass
-
-                items: List[OverlayItem] = []
-
-                sx = float(cap.scale_x)
-                sy = float(cap.scale_y)
-
-                for r, t in zip(regions, translations):
-                    if not t or not t.strip():
-                        continue
-
-                    rect_raw = getattr(r, 'rect', None)
-                    rect = rect_raw
-
-                    if isinstance(rect_raw, (list, tuple)) and len(rect_raw) == 4:
-                        rect = {
-                            'left': rect_raw[0],
-                            'top': rect_raw[1],
-                            'width': rect_raw[2],
-                            'height': rect_raw[3],
-                        }
-
-                    if not isinstance(rect, dict):
-                        continue
-
-                    left = int(float(rect.get('left', 0)) * sx)
-                    top = int(float(rect.get('top', 0)) * sy)
-
-                    if rect.get('right') is not None and rect.get('bottom') is not None:
-                        right = int(float(rect.get('right', 0)) * sx)
-                        bottom = int(float(rect.get('bottom', 0)) * sy)
-                    else:
-                        w = float(rect.get('width', 0))
-                        h = float(rect.get('height', 0))
-                        right = int((float(rect.get('left', 0)) + w) * sx)
-                        bottom = int((float(rect.get('top', 0)) + h) * sy)
-
-                    if left < 0:
-                        left = 0
-                    if top < 0:
-                        top = 0
-                    if right > int(cap.width):
-                        right = int(cap.width)
-                    if bottom > int(cap.height):
-                        bottom = int(cap.height)
-
-                    if right <= left or bottom <= top:
-                        continue
-
-                    items.append(
-                        OverlayItem(
-                            left=left,
-                            top=top,
-                            right=right,
-                            bottom=bottom,
-                            text=t,
-                            bg_color=r.bg_color,
+                    try:
+                        logger.info(
+                            "ROI OCR done: section=%s provider=%s regions=%d capture=%dx%d at (%d,%d)",
+                            self.section.name,
+                            pm.last_ocr_provider_name or self.cfg.ocr_provider,
+                            len(regions),
+                            cap.width, cap.height,
+                            cap.left, cap.top,
                         )
-                    )
+                    except Exception:
+                        pass
 
-                meta = {
-                    'signature': signature,
-                    'translations': translations,
-                    'src_text': src_text,
-                    'src_norm': src_norm,
-                }
+                    texts = [r.text for r in regions]
 
-                return items, meta
+                    def _sig(parts: List[str]) -> str:
+                        cleaned: List[str] = []
+                        for p in (parts or []):
+                            s = (p or '').strip()
+                            cleaned.append(s)
+                        joined = '\n'.join(cleaned)
+                        return f"{self.cfg.source_lang}->{self.cfg.target_lang}|{joined}".strip()
 
-            items, meta = asyncio.run(pipeline())
-            self.signals.finished.emit(sid, cap, items, meta)
-        except Exception as e:
-            self.signals.failed.emit(sid, str(e))
+                    cleaned_src: List[str] = []
+                    for p in (texts or []):
+                        s = (p or '').strip()
+                        if s:
+                            cleaned_src.append(s)
 
+                    src_text = '\n'.join(cleaned_src).strip()
+                    src_norm = normalize_text(src_text)
+
+                    signature = _sig(texts)
+
+                    translations: List[str] = []
+                    can_reuse = False
+                    if bool(getattr(self.cfg, 'skip_translate_if_same_text', True)):
+                        if self.prev_signature is not None and str(self.prev_signature) == str(signature):
+                            if self.prev_translations is not None and len(self.prev_translations) == len(texts):
+                                can_reuse = True
+
+                    if can_reuse:
+                        translations = list(self.prev_translations or [])
+                        try:
+                            logger.info('ROI Translate skipped (same text): section=%s items=%d', self.section.name, len(translations))
+                        except Exception:
+                            pass
+                    else:
+                        if not src_norm:
+                            translations = []
+                        else:
+                            translations = await pm.translate_text(texts, self.cfg.source_lang, self.cfg.target_lang)
+
+                    try:
+                        logger.info(
+                            "ROI Translate done: section=%s provider=%s items=%d %s->%s",
+                            self.section.name,
+                            pm.last_translation_provider_name or self.cfg.translation_provider,
+                            len(translations),
+                            self.cfg.source_lang,
+                            self.cfg.target_lang,
+                        )
+                    except Exception:
+                        pass
+
+                    items: List[OverlayItem] = []
+
+                    sx = float(cap.scale_x)
+                    sy = float(cap.scale_y)
+
+                    for r, t in zip(regions, translations):
+                        if not t or not t.strip():
+                            continue
+
+                        rect_raw = getattr(r, 'rect', None)
+                        rect = rect_raw
+
+                        if isinstance(rect_raw, (list, tuple)) and len(rect_raw) == 4:
+                            rect = {
+                                'left': rect_raw[0],
+                                'top': rect_raw[1],
+                                'width': rect_raw[2],
+                                'height': rect_raw[3],
+                            }
+
+                        if not isinstance(rect, dict):
+                            continue
+
+                        left = int(float(rect.get('left', 0)) * sx)
+                        top = int(float(rect.get('top', 0)) * sy)
+
+                        if rect.get('right') is not None and rect.get('bottom') is not None:
+                            right = int(float(rect.get('right', 0)) * sx)
+                            bottom = int(float(rect.get('bottom', 0)) * sy)
+                        else:
+                            w = float(rect.get('width', 0))
+                            h = float(rect.get('height', 0))
+                            right = int((float(rect.get('left', 0)) + w) * sx)
+                            bottom = int((float(rect.get('top', 0)) + h) * sy)
+
+                        if left < 0:
+                            left = 0
+                        if top < 0:
+                            top = 0
+                        if right > int(cap.width):
+                            right = int(cap.width)
+                        if bottom > int(cap.height):
+                            bottom = int(cap.height)
+
+                        if right <= left or bottom <= top:
+                            continue
+
+                        items.append(
+                            OverlayItem(
+                                left=left,
+                                top=top,
+                                right=right,
+                                bottom=bottom,
+                                text=t,
+                                bg_color=r.bg_color,
+                            )
+                        )
+
+                    meta = {
+                        'signature': signature,
+                        'translations': translations,
+                        'src_text': src_text,
+                        'src_norm': src_norm,
+                        'raw_heights': raw_heights_cap, # Передаємо висоти у метадані
+                    }
+
+                    return items, meta
+
+                items, meta = asyncio.run(pipeline())
+                self.signals.finished.emit(sid, cap, items, meta)
+            except Exception as e:
+                self.signals.failed.emit(sid, str(e))
 
 class RoiSelectionDialog(QtWidgets.QDialog):
     """Модальний селектор ROI без ручних event-loop, щоб не «заморожувати» весь UI."""
@@ -684,17 +699,20 @@ class RoiSectionController(QtCore.QObject):
         except Exception:
             pass
 
-    def _maybe_auto_init_font_and_box(self, items_dip: List[OverlayItem]) -> None:
-        # Авто-ініціалізація робиться тільки якщо секція має власні налаштування.
+    def _maybe_auto_init_font_and_box(self, items_dip: List[OverlayItem], raw_heights_dip: Optional[List[float]] = None) -> None:
         if not bool(getattr(self.section, 'overlay_custom', True)):
             return
 
         if not items_dip:
             return
 
+        need_font = getattr(self.section, 'overlay_font_size', None) is None
+        need_box = getattr(self.section, 'overlay_max_box_height', None) is None
+        if not (need_font or need_box):
+            return
+
         need_save = False
 
-        # Висота ROI-вікна у DIP
         try:
             roi_h = int(self.overlay.height() or 0)
         except Exception:
@@ -707,133 +725,106 @@ class RoiSectionController(QtCore.QObject):
         if roi_h <= 0:
             roi_h = 1
 
-        # Типова висота OCR-регіонів
         heights: List[float] = []
-        widths: List[float] = []
-        for it in items_dip:
-            try:
-                h = float(int(it.bottom) - int(it.top))
-                w = float(int(it.right) - int(it.left))
-            except Exception:
-                continue
-            if h < 6 or h > float(roi_h * 1.2):
-                continue
-            if w < 10:
-                continue
-            heights.append(h)
-            widths.append(w)
+        valid_text_len = 0
+        
+        # ВИКОРИСТОВУЄМО ОРИГІНАЛЬНІ ВИСОТИ (до злиття рядків), щоб шрифт не був велетенським
+        if raw_heights_dip and len(raw_heights_dip) > 0:
+            for h in raw_heights_dip:
+                if h >= 6.0 and h <= float(roi_h * 1.2):
+                    heights.append(h)
+            for it in items_dip:
+                valid_text_len += len((it.text or '').strip())
+                
+        # Fallback, якщо оригінальних висот немає
+        if not heights:
+            for it in items_dip:
+                try:
+                    h = float(int(it.bottom) - int(it.top))
+                    w = float(int(it.right) - int(it.left))
+                except Exception:
+                    continue
+                if h < 6 or h > float(roi_h * 1.2):
+                    continue
+                if w < 10:
+                    continue
+                heights.append(h)
+                valid_text_len += len((it.text or '').strip())
+
+        if not heights or valid_text_len < 3:
+            return
 
         med_h = _median(heights)
         if med_h <= 0.0:
             med_h = float(min(28, roi_h))
 
-        # Оцінка "висоти рядка": беремо нижній перцентиль, щоб мультилайн-бокси не роздували метрику.
-        line_h_est = _percentile(heights, 0.35)
-        if line_h_est <= 0.0:
-            line_h_est = float(med_h)
+        line_h_est = med_h
 
-        # Оцінка типового числа рядків (на базі кластерів по Y).
-        centers: List[float] = []
+        # Оцінка типового числа рядків
+        est_lines = 1
+        max_box_h = 0.0
         for it in items_dip:
             try:
-                cy = (float(int(it.top)) + float(int(it.bottom))) / 2.0
                 hh = float(int(it.bottom) - int(it.top))
-                if hh < 6:
-                    continue
-                if hh > float(roi_h * 1.2):
-                    continue
-                centers.append(float(cy))
+                if hh > max_box_h:
+                    max_box_h = hh
             except Exception:
-                continue
-
-        centers.sort()
-        tol = max(3.0, float(line_h_est) * 0.85)
-        line_clusters: List[List[float]] = []
-        for cy in centers:
-            if not line_clusters:
-                line_clusters.append([cy])
-                continue
-            if abs(cy - float(sum(line_clusters[-1]) / max(1, len(line_clusters[-1])))) <= tol:
-                line_clusters[-1].append(cy)
-            else:
-                line_clusters.append([cy])
-
-        est_lines = int(len(line_clusters) or 1)
+                pass
+                
+        if max_box_h > float(line_h_est) * 1.4:
+            est_lines = int(round(max_box_h / float(line_h_est)))
+            
         if est_lines < 1:
             est_lines = 1
-        if est_lines > 6:
-            est_lines = 6
 
         # 1) Авто розмір шрифту
-        if getattr(self.section, 'overlay_font_size', None) is None:
+        if need_font:
             try:
-                fam = getattr(self.section, 'overlay_font_family', None)
-                if fam is None or str(fam).strip() == '':
-                    fam = None
-                if fam is None:
-                    if self._base_overlay_style is not None:
-                        fam = str(getattr(self._base_overlay_style, 'font_family', 'Segoe UI') or 'Segoe UI')
-                    else:
-                        fam = 'Segoe UI'
+                target_text_h = float(line_h_est) * 0.70
+                if target_text_h < 8.0:
+                    target_text_h = 8.0
+                if target_text_h > 72.0:
+                    target_text_h = 72.0
 
-                # OCR box height (DIP) зазвичай більший за реальну висоту гліфів.
-                # Для адекватного старту беремо ~58% від висоти OCR-регіона.
-                target_text_h = float(line_h_est) * 0.58
-                if target_text_h < 7.0:
-                    target_text_h = 7.0
-                if target_text_h > 60.0:
-                    target_text_h = 60.0
-
-                # DIP ~= 96 dpi. 1pt = 1/72", тобто 1pt ≈ 96/72 = 1.333 DIP.
-                # Оверлей множить font_size на cfg.font_scale, тому тут зберігаємо базовий розмір.
-                scale = 1.0
-                try:
-                    scale = float(self.cfg.font_scale or 1.0)
-                except Exception:
-                    scale = 1.0
+                scale = float(getattr(self.cfg, 'font_scale', 1.0) or 1.0)
                 if scale <= 0:
                     scale = 1.0
 
                 point_size_used = float(target_text_h) / 1.3333333333
                 base_size = float(point_size_used) / float(scale)
 
-                if base_size < 6.0:
-                    base_size = 6.0
-                if base_size > 48.0:
-                    base_size = 48.0
+                if base_size < 8.0:
+                    base_size = 8.0
+                if base_size > 64.0:
+                    base_size = 64.0
 
-                # Трохи округлення, щоб не писати в конфіг зайві десяті
                 self.section.overlay_font_size = float(round(base_size, 1))
                 need_save = True
             except Exception:
                 pass
 
         # 2) Авто максимальна висота боксу
-        if getattr(self.section, 'overlay_max_box_height', None) is None:
+        if need_box:
             try:
-                # Замість "1 рядок" беремо типовий ліміт у 2-4 рядки.
-                # Це критично для субтитрів: переклад майже завжди довший за оригінал.
                 base = self._base_overlay_style
                 if base is None:
                     base = OverlayStyle()
                 eff = _build_effective_section_style(base, self.section)
 
                 pad = int(getattr(eff, 'padding', 6) or 6)
+                calc_pad = min(pad, 6)
 
-                # Мінімум 2 рядки, максимум 5 (щоб не закривати половину ROI)
-                lines_cap = int(est_lines)
+                lines_cap = int(est_lines) + 1
                 if lines_cap < 2:
                     lines_cap = 2
                 if lines_cap > 5:
                     lines_cap = 5
 
-                picked = (float(line_h_est) * float(lines_cap)) + float(pad) * 2.0
+                picked = (float(line_h_est) * float(lines_cap)) + float(calc_pad)
+                picked = picked * 1.05
 
-                # Трохи повітря
-                picked = picked * 1.08
-
-                if picked < 18.0:
-                    picked = 18.0
+                if picked < 20.0:
+                    picked = 20.0
                 if picked > float(roi_h):
                     picked = float(roi_h)
 
@@ -847,8 +838,6 @@ class RoiSectionController(QtCore.QObject):
                 save_config(self.cfg)
             except Exception:
                 pass
-
-            # Оновлюємо ефективний стиль одразу
             try:
                 if self._base_overlay_style is not None:
                     eff = _build_effective_section_style(self._base_overlay_style, self.section)
@@ -856,7 +845,7 @@ class RoiSectionController(QtCore.QObject):
                     self.overlay.set_style(eff)
             except Exception:
                 pass
-
+    
     def _update_overlay_geometry(self) -> None:
         screen, dpr, mon = _pick_screen_for_monitor(self.app, self.section.monitor_index)
         if screen is None:
@@ -1033,113 +1022,113 @@ class RoiSectionController(QtCore.QObject):
 
     @QtCore.Slot(object, object, object, object)
     def _on_done(self, section_id, cap: CaptureInfo, items: List[OverlayItem], meta):
-        if section_id != self.section.id:
-            return
-        self._busy = False
+            if section_id != self.section.id:
+                return
+            self._busy = False
 
-        src_text = ""
-        src_norm = ""
-        try:
-            if isinstance(meta, dict):
-                src_text = str(meta.get('src_text') or '')
-                src_norm = str(meta.get('src_norm') or '')
-        except Exception:
             src_text = ""
             src_norm = ""
-
-        # 1) Якщо текст у зоні зник: прибираємо бокс і чистимо кеш
-        if not src_norm:
-            self._last_src_text = ""
-            self._last_src_norm = ""
-            self._last_items = None
-            self._last_ocr_signature = None
-            self._last_translations = None
-            self._clear_overlay()
-            return
-
-        # 2) Якщо ≥90% схожий на попередній: НЕ перекладаємо/НЕ чіпаємо бокс
-        # Важливо: оверлеї ми ховали перед capture, тому треба повернути свій бокс.
-        if self._last_src_norm and is_same_or_similar(src_norm, self._last_src_norm, threshold=self._similarity_threshold):
-            self._restore_own_overlay_if_needed()
-            return
-
-        # 3) Новий текст: оновлюємо кеш
-        self._last_src_text = src_text
-        self._last_src_norm = src_norm
-
-        try:
-            if isinstance(meta, dict):
-                self._last_ocr_signature = meta.get('signature')
-                self._last_translations = meta.get('translations')
-        except Exception:
-            pass
-
-        # Якщо переклад не згенерував items (але OCR текст є), просто сховати бокс
-        # і не тримати “старий” на екрані.
-        if not items:
-            self._last_items = None
-            self._clear_overlay()
-            return
-
-        self._last_items = items
-
-        if not self._overlay_enabled_global:
-            return
-        if not self.section.enabled:
-            return
-
-        if self._overlay_style is not None:
+            raw_heights_cap = []
             try:
-                self.overlay.set_style(self._overlay_style)
+                if isinstance(meta, dict):
+                    src_text = str(meta.get('src_text') or '')
+                    src_norm = str(meta.get('src_norm') or '')
+                    raw_heights_cap = meta.get('raw_heights') or []
+            except Exception:
+                src_text = ""
+                src_norm = ""
+
+            # 1) Якщо текст у зоні зник: прибираємо бокс і чистимо кеш
+            if not src_norm:
+                self._last_src_text = ""
+                self._last_src_norm = ""
+                self._last_items = None
+                self._last_ocr_signature = None
+                self._last_translations = None
+                self._clear_overlay()
+                return
+
+            # 2) Якщо ≥90% схожий на попередній: НЕ перекладаємо/НЕ чіпаємо бокс
+            if self._last_src_norm and is_same_or_similar(src_norm, self._last_src_norm, threshold=self._similarity_threshold):
+                self._restore_own_overlay_if_needed()
+                return
+
+            # 3) Новий текст: оновлюємо кеш
+            self._last_src_text = src_text
+            self._last_src_norm = src_norm
+
+            try:
+                if isinstance(meta, dict):
+                    self._last_ocr_signature = meta.get('signature')
+                    self._last_translations = meta.get('translations')
             except Exception:
                 pass
 
-        # Координати з OCR приходять у пікселях кадра (cap.width/cap.height).
-        # Оверлей працює у DIP. На різних моніторах/масштабах dpr може "плавати",
-        # тому беремо реальне співвідношення: overlay_size(DIP) / capture_size(px).
-        items_fixed: List[OverlayItem] = []
+            if not items:
+                self._last_items = None
+                self._clear_overlay()
+                return
 
-        inv_x = float(self._inv_dpr or 1.0)
-        inv_y = float(self._inv_dpr or 1.0)
-        try:
-            ov_w = int(self.overlay.width() or 0)
-            ov_h = int(self.overlay.height() or 0)
-            cap_w = int(getattr(cap, 'width', 0) or 0)
-            cap_h = int(getattr(cap, 'height', 0) or 0)
+            self._last_items = items
 
-            if ov_w > 0 and cap_w > 0:
-                inv_x = float(ov_w) / float(cap_w)
-            if ov_h > 0 and cap_h > 0:
-                inv_y = float(ov_h) / float(cap_h)
-        except Exception:
-            pass
+            if not self._overlay_enabled_global:
+                return
+            if not self.section.enabled:
+                return
 
-        for it in items:
-            items_fixed.append(
-                OverlayItem(
-                    left=int(round(int(it.left) * inv_x)),
-                    top=int(round(int(it.top) * inv_y)),
-                    right=int(round(int(it.right) * inv_x)),
-                    bottom=int(round(int(it.bottom) * inv_y)),
-                    text=it.text,
-                    bg_color=it.bg_color,
+            if self._overlay_style is not None:
+                try:
+                    self.overlay.set_style(self._overlay_style)
+                except Exception:
+                    pass
+
+            items_fixed: List[OverlayItem] = []
+
+            inv_x = float(self._inv_dpr or 1.0)
+            inv_y = float(self._inv_dpr or 1.0)
+            try:
+                ov_w = int(self.overlay.width() or 0)
+                ov_h = int(self.overlay.height() or 0)
+                cap_w = int(getattr(cap, 'width', 0) or 0)
+                cap_h = int(getattr(cap, 'height', 0) or 0)
+
+                if ov_w > 0 and cap_w > 0:
+                    inv_x = float(ov_w) / float(cap_w)
+                if ov_h > 0 and cap_h > 0:
+                    inv_y = float(ov_h) / float(cap_h)
+            except Exception:
+                pass
+
+            for it in items:
+                items_fixed.append(
+                    OverlayItem(
+                        left=int(round(int(it.left) * inv_x)),
+                        top=int(round(int(it.top) * inv_y)),
+                        right=int(round(int(it.right) * inv_x)),
+                        bottom=int(round(int(it.bottom) * inv_y)),
+                        text=it.text,
+                        bg_color=it.bg_color,
+                    )
                 )
-            )
 
-        # Авто-підбір стартових параметрів (font size / max box height) по OCR-регіонах.
-        # Робиться рівно один раз, поки відповідні поля не встановлені.
-        try:
-            self._maybe_auto_init_font_and_box(items_fixed)
-        except Exception:
-            pass
+            raw_heights_dip = []
+            try:
+                raw_heights_dip = [float(h) * inv_y for h in raw_heights_cap]
+            except Exception:
+                pass
 
-        self.overlay.set_items(items_fixed, font_scale=self.cfg.font_scale)
-        self.overlay.show()
-        try:
-            self.overlay.raise_()
-        except Exception:
-            pass
+            try:
+                self._maybe_auto_init_font_and_box(items_fixed, raw_heights_dip)
+            except Exception:
+                pass
 
+            self.overlay.set_items(items_fixed, font_scale=self.cfg.font_scale)
+            self.overlay.show()
+            try:
+                self.overlay.raise_()
+            except Exception:
+                pass
+    
     @QtCore.Slot(object, str)
     def _on_failed(self, section_id, msg: str):
         if section_id != self.section.id:

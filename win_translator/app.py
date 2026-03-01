@@ -855,6 +855,7 @@ class AppController(QtCore.QObject):
     def __init__(self, app: QtWidgets.QApplication):
         super().__init__()
         self.app = app
+        self.app.setQuitOnLastWindowClosed(False)
         self.cfg = load_config()
 
         self.overlay = OverlayWindow()

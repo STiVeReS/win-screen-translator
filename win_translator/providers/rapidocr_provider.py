@@ -238,6 +238,7 @@ class RapidOCRProvider(OCRProvider):
         if rec_keys and os.path.exists(rec_keys):
             kwargs["rec_keys_path"] = rec_keys
 
+        kwargs["providers"] = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         # Пороги детекції: тримай консервативно, якщо не знаєш
         # (в rapidocr_onnxruntime назви параметрів можуть різнитись по версіях,
         # тому тут не чіпаю det_thresh/limit_side_len, щоб не впасти)

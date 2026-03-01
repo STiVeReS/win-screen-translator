@@ -110,13 +110,7 @@ def merge_close_text_regions(
     line_y_ratio: float = 0.70,
     merge_vertical: bool = True,
 ) -> List[TextRegion]:
-    """Зшиває близькі OCR-регіони в один рядок (word/segment merge).
-
-    Ідея проста: OCR часто повертає кілька прямокутників на один рядок (або навіть слово).
-    Переклад по шматках дає кашу. Тут ми групуємо по рядках (Y) і зшиваємо по X.
-
-    За замовчуванням НЕ зливаємо рядки вертикально, тільки сегменти в межах рядка.
-    """
+    """Зшиває близькі OCR-регіони в один рядок (word/segment merge)."""
 
     if not enabled:
         return regions
@@ -182,7 +176,6 @@ def merge_close_text_regions(
             line_centers.append(float(bx.cy))
         else:
             line_groups[best_i].append(bx)
-            # оновлюємо центр рядка
             n = float(len(line_groups[best_i]))
             line_centers[best_i] = (float(line_centers[best_i]) * (n - 1.0) + float(bx.cy)) / n
 
@@ -211,7 +204,6 @@ def merge_close_text_regions(
             min_h = max(1.0, min(cur.h, bx.h))
             overlap_ratio = float(overlap_y) / float(min_h)
 
-            # схожість висот (щоб не зшивати різні «ряди» або UI-елементи)
             h_ratio = float(max(cur.h, bx.h)) / float(max(1.0, min(cur.h, bx.h)))
 
             can_merge = True
@@ -229,10 +221,8 @@ def merge_close_text_regions(
                 cur.r = float(max(cur.r, bx.r))
                 cur.b = float(max(cur.b, bx.b))
 
-                # confidence: грубо середнє
                 cur.confidence = float((cur.confidence + bx.confidence) / 2.0)
 
-                # bg_color: якщо обидва є, середнє
                 if cur.bg_color is not None and bx.bg_color is not None:
                     try:
                         cur.bg_color = [
@@ -267,9 +257,10 @@ def merge_close_text_regions(
         out_v: List[_Box] = []
         cur_v: Optional[_Box] = None
 
-        max_v_gap = max(2.0, float(med_h) * 0.90)
-        min_x_overlap_ratio = 0.55
-        align_tol = float(med_h) * 1.25
+        # ЗОЛОТА СЕРЕДИНА: Субтитри будуть зливатись, а віддалені списки меню - ні
+        max_v_gap = max(2.0, float(med_h) * 0.85)
+        min_x_overlap_ratio = 0.40
+        align_tol = float(med_h) * 0.80
 
         for bx in merged2:
             if cur_v is None:
@@ -286,7 +277,6 @@ def merge_close_text_regions(
 
             v_gap = float(bx.t - cur_v.b)
             if v_gap < -max_v_gap:
-                # перекриття по Y занадто велике/дивне, не зшиваємо
                 v_gap = max_v_gap + 1.0
 
             x_overlap = float(min(cur_v.r, bx.r) - max(cur_v.l, bx.l))
@@ -359,7 +349,6 @@ def merge_close_text_regions(
             )
         )
 
-    # Стабільний порядок: згори-вниз, зліва-направо
     out.sort(key=lambda r: (
         _safe_float((r.rect or {}).get('top', 0), 0.0),
         _safe_float((r.rect or {}).get('left', 0), 0.0),

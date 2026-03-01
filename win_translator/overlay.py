@@ -349,9 +349,58 @@ class OverlayWindow(QtWidgets.QWidget):
             if wrap_chars > 0:
                 txt = _wrap_text_by_chars(txt, wrap_chars)
 
-            # Внутрішня ширина (без padding). Стартуємо від OCR rect ширини.
+            # ---- ТОЧНЕ СИМЕТРИЧНЕ РОЗШИРЕННЯ БОКСУ ----
+            orig_lines = max(1, int(round(base_h / line_h)))
             inner_w = base_w
+            
+            if wrap_chars <= 0:
+                # Перевіряємо, скільки рядків вийде при поточній ширині
+                test_lines = _layout_lines_word_wrap(txt, base_font, inner_w)
+                
+                # Якщо рядків виходить більше ніж в оригіналі, розширюємо бокс
+                if len(test_lines) > orig_lines:
+                    max_w = int(base_w * 2.5)  # Дозволяємо збільшення до 2.5 разів
+                    screen_limit = win_w - pad * 2
+                    if max_w > screen_limit:
+                        max_w = screen_limit
+                    if max_w < base_w:
+                        max_w = base_w
 
+                    # Поступово збільшуємо ширину на 25px, поки текст не влізе у потрібні рядки
+                    while len(test_lines) > orig_lines and inner_w < max_w:
+                        inner_w += 25
+                        test_lines = _layout_lines_word_wrap(txt, base_font, inner_w)
+                    
+                    if inner_w > max_w:
+                        inner_w = max_w
+
+            # Якщо бокс довелося розширити, центруємо його відносно оригінального
+            if inner_w > base_w:
+                extra = inner_w - base_w
+                new_left = text_x - int(extra / 2)
+                new_right = text_x + base_w + int(extra / 2)
+                
+                # Запобіжник: якщо лівий край вилазить за екран, штовхаємо все вправо
+                if new_left < pad:
+                    offset = pad - new_left
+                    new_left += offset
+                    new_right += offset
+                    
+                # Запобіжник: якщо правий край вилазить за екран, штовхаємо все вліво
+                if new_right > win_w - pad:
+                    offset = new_right - (win_w - pad)
+                    new_right -= offset
+                    new_left -= offset
+                    
+                # Якщо екран занадто вузький
+                if new_left < pad:
+                    new_left = pad
+                    new_right = win_w - pad
+                    
+                text_x = new_left
+                inner_w = max(1, new_right - new_left)
+
+            # Перевіряємо ширину найдовшого слова/рядка (якщо є примусові переноси)
             if wrap_chars > 0:
                 lines_probe = (txt or '').splitlines()
                 if not lines_probe:
@@ -368,7 +417,7 @@ class OverlayWindow(QtWidgets.QWidget):
                     inner_w = max_line_px
             else:
                 try:
-                    br = fm.boundingRect(QtCore.QRect(0, 0, int(base_w), 10000), flags, txt)
+                    br = fm.boundingRect(QtCore.QRect(0, 0, int(inner_w), 10000), flags, txt)
                     bw = int(br.width() or 0)
                     if bw > inner_w:
                         inner_w = bw
@@ -416,16 +465,30 @@ class OverlayWindow(QtWidgets.QWidget):
             if not lines:
                 lines = ['']
 
-            # Попередній розрахунок висоти під max_lines (грубо, але ок).
             text_h = int(len(lines) * line_h)
             if text_h < 1:
                 text_h = 1
 
-            inner_h = base_h
-            if text_h > inner_h:
-                inner_h = text_h
+            # --- ВЕРТИКАЛЬНЕ ЦЕНТРУВАННЯ ТА ЗАХИСТ ВІД ОБРІЗАННЯ ---
+            cy = float(it.top) + float(base_h) / 2.0
+            
+            inner_h = text_h
+            if base_h > inner_h:
+                inner_h = base_h
+
+            box_inner_top = int(round(cy - float(inner_h) / 2.0))
+            box_top = box_inner_top - pad
+
+            if box_top < 0:
+                box_top = 0
 
             box_h = inner_h + pad * 2
+
+            # ЗАПОБІЖНИК: max_box_h не може бути меншим за висоту оригінального тексту + 1 додатковий рядок
+            if max_box_h > 0:
+                safe_max_h = base_h + line_h + pad * 2
+                if max_box_h < safe_max_h:
+                    max_box_h = safe_max_h
 
             avail_box_h = win_h - box_top
             if avail_box_h < 1:
@@ -441,7 +504,8 @@ class OverlayWindow(QtWidgets.QWidget):
             inner_h = box_h - pad * 2
             if inner_h < 1:
                 inner_h = 1
-            # Обрізаємо рядки під фактичну висоту (макс. висота або край екрану).
+
+            # Обрізаємо рядки під фактичну висоту
             max_lines = 1
             if line_h > 0:
                 max_lines = int(inner_h // line_h)
@@ -452,8 +516,6 @@ class OverlayWindow(QtWidgets.QWidget):
                 kept = lines[:max_lines]
                 last = kept[-1] if kept else ''
                 last2 = str(last or '')
-
-                # Додаємо трикрапку і елліпсимо під ширину.
                 if not last2.endswith('…'):
                     last2 = last2.rstrip() + '…'
                 last2 = _elide_line(fm, last2, inner_w)
@@ -463,14 +525,13 @@ class OverlayWindow(QtWidgets.QWidget):
 
             txt_final = "\n".join(lines)
 
-            # Після обрізання можемо уточнити потрібну висоту, але не перевищуючи ліміти.
+            # Перераховуємо фінальну висоту тексту
             text_h2 = int(max(1, len(lines) * line_h))
-            needed_inner_h = base_h
-            if text_h2 > needed_inner_h:
-                needed_inner_h = text_h2
+            needed_inner_h = text_h2
+            if base_h > needed_inner_h:
+                needed_inner_h = base_h
 
             needed_box_h = needed_inner_h + pad * 2
-            # не роздуваємося більше того, що вже дозволено
             if max_box_h > 0 and needed_box_h > max_box_h:
                 needed_box_h = max_box_h
             if needed_box_h > avail_box_h:
@@ -481,16 +542,20 @@ class OverlayWindow(QtWidgets.QWidget):
             box_h = int(needed_box_h)
             inner_h = int(max(1, box_h - pad * 2))
 
-            # Якщо вилізли вниз, підсуваємо вгору (і текст також).
+            # Якщо вилізли вниз екрану
             if box_top + box_h > win_h:
                 if box_h >= win_h:
                     box_top = 0
                     box_h = win_h
                 else:
                     box_top = win_h - box_h
-                text_y = box_top + pad
 
-            # Якщо вилізли вправо, підсуваємо вліво (і текст також).
+            # Центруємо текст вже у фінальному вирахуваному боксі
+            text_y = box_top + pad
+            if inner_h > text_h2:
+                text_y += int((inner_h - text_h2) / 2.0)
+
+            # Якщо вилізли вправо, підсуваємо вліво
             if box_left + box_w > win_w:
                 if box_w >= win_w:
                     box_left = 0
@@ -522,6 +587,23 @@ class OverlayWindow(QtWidgets.QWidget):
                 float(max(1, int(inner_h))),
             )
 
-            painter.drawText(text_rect, flags, txt_final)
+            # Якщо рядків декілька і є вільне місце, розтягуємо їх по висоті боксу
+            if len(lines) > 1 and inner_h > text_h2:
+                extra_space = inner_h - text_h2
+                gap = extra_space / float(len(lines) - 1)
+                
+                y_cursor = float(text_y)
+                for line_str in lines:
+                    line_rect = QtCore.QRectF(
+                        float(text_x), 
+                        y_cursor, 
+                        float(inner_w), 
+                        float(line_h)
+                    )
+                    painter.drawText(line_rect, flags, line_str)
+                    y_cursor += line_h + gap
+            else:
+                # Стандартне малювання параграфом у області тексту
+                painter.drawText(text_rect, flags, txt_final)
 
         painter.end()
